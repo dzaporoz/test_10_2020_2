@@ -24,6 +24,7 @@ class MigrationCommand {
                 exit;
             }
             fclose($handle);
+            unlink($db_path);
         }
         if (! file_exists($db_root)) {
             mkdir($db_root, 0755);
@@ -33,12 +34,11 @@ class MigrationCommand {
         $db = Kernel::getService(DatabaseInterface::class);
         $db->exec('CREATE TABLE IF NOT EXISTS grabbed_articles (
             id INTEGER PRIMARY KEY NOT NULL,
-            date DATE NOT NULL,
             url VARCHAR not NULL,
             title VARCHAR NOT NULL,
             excerpt VARCHAR NOT NULL,
             content TEXT not NULL,
-            image VARCHAR
+            image_url VARCHAR
         )');
 
         echo "Database migration finished successfully." . PHP_EOL;
