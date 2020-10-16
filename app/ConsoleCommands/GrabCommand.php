@@ -38,59 +38,48 @@ class GrabCommand
 
     public function handle()
     {
-        require_once Kernel::ROOT_PATH . '/resources/simple_html_dom.php';
-        $articleBody = file_get_contents(Kernel::ROOT_PATH . '/test.html');
-
-
-        $articleData = [
-            'url'       => 'blabla',
-            'image_url' => $this->parseArticleImageUrl($articleBody),
-            'title'     => $this->parseArticleTitle($articleBody),
-            'content'   => $this->parseArticleContent($articleBody),
-        ];
-        $articleData['excerpt'] = $this->generateExcerpt($articleData['content']);
-//        print_r($articleData);
-
-        $articles = [$articleData];
-
-        $objTmp = (object) array('aFlat' => array());
-        array_walk_recursive($articles, function(&$value, $key, $object) {
-            $object->aFlat[] = $value;
-        }, $objTmp);
-print_r($objTmp->aFlat);
-        $rows = str_repeat('(?,?,?,?),', count($articles) - 1) . '(?,?,?,?)';
-        $sql = "INSERT INTO grabbed_articles (url, image_url, title, content, excerpt) VALUES $rows";
-        $result = $this->db->prepare($sql)->execute($objTmp->aFlat);
-if (!$result) {
-    print_r($this->db->errorInfo());
-}
-
-        die;
-$in  = str_repeat('?,', count($urls) - 1) . '?';
-        $sql = "SELECT url FROM grabbed_articles WHERE url IN ($in)";
-        $result = $this->db->prepare($sql);
-        $result->execute($urls);
-
-
-
-
         $res = $this->httpClient->request('GET', self::URL_TO_GRAB);
 
         $articlesUrls = $this->getNewArticles($res->getBody());
         $urlsToGrab = array_slice($this->filterArticles($articlesUrls), 0, self::GRAB_LIMIT);
+        $urlsToGrab = array_fill_keys($urlsToGrab, null);
 
         $articlesNum = count($urlsToGrab);
         if ($articlesNum == 0) {
             die('There is nothing to grab' . PHP_EOL);
         }
         echo "There are $articlesNum new articles to be parsed:" . PHP_EOL;
-        echo implode(PHP_EOL, $urlsToGrab) . PHP_EOL;
+//        echo implode(PHP_EOL, $urlsToGrab) . PHP_EOL;
+        $this->outputStatusTable($urlsToGrab);
 
         require_once Kernel::ROOT_PATH . '/resources/simple_html_dom.php';
 
-        foreach ($urlsToGrab as $url) {
-            $this->grabArticle($url);
+        $articlesData = [];
+        foreach ($urlsToGrab as $url => &$status) {
+            $status = 'parsing...';
+            $this->outputStatusTable($urlsToGrab);
+            try {
+                $articlesData[] = $this->grabArticle($url);
+                $status = 'finished';
+            } catch (\Exception $e) {
+                $status = 'ERROR: ' . $e->getMessage();
+            }
+            $this->outputStatusTable($urlsToGrab);
         }
+
+        $objTmp = (object) array('aFlat' => array());
+        array_walk_recursive($articlesData, function(&$value, $key, $object) {
+            $object->aFlat[] = $value;
+        }, $objTmp);
+
+        $rows = str_repeat('(?,?,?,?,?),', count($articlesData) - 1) . '(?,?,?,?,?)';
+        $sql = "INSERT INTO grabbed_articles (url, image_url, title, content, excerpt) VALUES $rows";
+        $result = $this->db->prepare($sql);
+        if (!$result) {
+            print_r($this->db->errorInfo());
+        }
+
+        $result->execute($objTmp->aFlat);
     }
 
     protected function getNewArticles(string $page_content) : array
@@ -122,7 +111,7 @@ $in  = str_repeat('?,', count($urls) - 1) . '?';
         return $articlesToFilter;
     }
 
-    protected function grabArticle(string $url)
+    protected function grabArticle(string $url) : array
     {
         $res = $this->httpClient->request('GET', $url);
 
@@ -136,6 +125,8 @@ $in  = str_repeat('?,', count($urls) - 1) . '?';
         ];
 
         $articleData['excerpt'] = $this->generateExcerpt($articleData['content']);
+
+        return $articleData;
     }
 
     protected function parseArticleImageUrl(string $articleBody) : ?string
@@ -221,5 +212,30 @@ $in  = str_repeat('?,', count($urls) - 1) . '?';
             $excerpt = mb_substr($excerpt, 0, $lastSpacePos);
         }
         return $excerpt;
+    }
+
+    protected function outputStatusTable(array $articles)
+    {
+        static $firstOutput = true;
+        static $longestUrl;
+
+        if (empty($longestUrl)) {
+            $longestUrl = max(array_map('strlen', array_keys($articles)));
+        }
+
+        $outputObject = (object) array('lines' => array());
+        array_walk($articles, function(&$value, $key, $object) use ($longestUrl) {
+            $object->lines[] = (! $value) ? $key : sprintf("%-${longestUrl}s\t-\t%s", $key, $value);
+        }, $outputObject);
+        $output = implode(PHP_EOL, $outputObject->lines);
+
+        if ($firstOutput) {
+            $firstOutput = false;
+        } else {
+            $linesOffset = count($articles);
+            echo chr(27) . "[0G";
+            echo chr(27) . "[${linesOffset}A";
+        }
+        echo $output . PHP_EOL;
     }
 }
