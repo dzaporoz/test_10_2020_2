@@ -4,7 +4,7 @@
 namespace App\Core;
 
 
-class Database
+class Database extends \PDO implements DatabaseInterface
 {
 
 }

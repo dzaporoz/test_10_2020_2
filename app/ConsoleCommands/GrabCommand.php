@@ -4,6 +4,7 @@
 namespace App\ConsoleCommands;
 
 
+use App\Core\DatabaseInterface;
 use GuzzleHttp\Client;
 
 class GrabCommand
@@ -17,6 +18,11 @@ class GrabCommand
     const GRAB_LIMIT = 15;
 
     protected $db;
+
+    public function __construct(DatabaseInterface $db)
+    {
+        $this->db = $db;
+    }
 
     public function handle()
     {

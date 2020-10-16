@@ -32,7 +32,7 @@ class ConsoleManager
 
         foreach ($this->command_classes as $command_class) {
             if ($command_class::NAME == $command_name) {
-                $command = new $command_class;
+                $command = Kernel::getService($command_class);
             }
         }
 
