@@ -16,13 +16,22 @@ class GrabCommand
 
     const URL_TO_GRAB = 'https://www.rbc.ru';
 
-    const GRAB_LIMIT = 15;
-
     const EXCERPT_LENGHT = 200;
 
-    const CONTENT_SELECTORS_BLACK_LIST = [
-        'div.article__text__overview', 'div.article__main-image', 'div.article__inline-item',
-        'div.article__clear', 'div.banner', 'div.pro-anons', 'script'
+    const SUBDOMAINS_TO_SKIP = ['//traffic.rbc.ru', '//moneysend.rbc.ru'];
+
+    const NODE_SELECTORS_TO_REMOVE = [
+        'div.article__text__overview',
+        'div.article__main-image',
+        'div.article__inline-item',
+        'div.article__clear',
+        'div.article__ticker',
+        'div.article__inline-video',
+        '.g-hidden',
+        'div.js-news-video-stat',
+        'div.banner',
+        'div.pro-anons',
+        'script'
     ];
 
     protected $db;
@@ -38,35 +47,53 @@ class GrabCommand
 
     public function handle()
     {
-        $res = $this->httpClient->request('GET', self::URL_TO_GRAB);
-
-        $articlesUrls = $this->getNewArticles($res->getBody());
-        $urlsToGrab = array_slice($this->filterArticles($articlesUrls), 0, self::GRAB_LIMIT);
+        $urlsToGrab = $this->getUrlsToGrab();
         $urlsToGrab = array_fill_keys($urlsToGrab, null);
 
-        $articlesNum = count($urlsToGrab);
-        if ($articlesNum == 0) {
+        $numberOfUrls = count($urlsToGrab);
+        if ($numberOfUrls == 0) {
             die('There is nothing to grab' . PHP_EOL);
         }
-        echo "There are $articlesNum new articles to be parsed:" . PHP_EOL;
-//        echo implode(PHP_EOL, $urlsToGrab) . PHP_EOL;
+        echo "There are $numberOfUrls new articles to be grabbed:" . PHP_EOL;
         $this->outputStatusTable($urlsToGrab);
 
-        require_once Kernel::ROOT_PATH . '/resources/simple_html_dom.php';
+        require_once Kernel::ROOT_PATH . '/resources/libraries/simple_html_dom.php';
 
         $articlesData = [];
         foreach ($urlsToGrab as $url => &$status) {
+            if (! empty($status)) {
+                continue;
+            }
+
             $status = 'parsing...';
             $this->outputStatusTable($urlsToGrab);
             try {
                 $articlesData[] = $this->grabArticle($url);
-                $status = 'finished';
+                $status = 'OK';
             } catch (\Exception $e) {
                 $status = 'ERROR: ' . $e->getMessage();
             }
             $this->outputStatusTable($urlsToGrab);
         }
 
+        $this->saveArticles($articlesData);
+    }
+
+    protected function getUrlsToGrab()
+    {
+        $res = $this->httpClient->request('GET', self::URL_TO_GRAB);
+
+        $indexPageUrls = $this->parseIndexPageForUrls($res->getBody());
+        return $this->filterUrls($indexPageUrls);
+    }
+
+    protected function saveArticles($articlesData)
+    {
+        if (empty($articlesData)) {
+            die('There is nothing to save' . PHP_EOL);
+        }
+
+        echo 'Saving grabbed articles' . PHP_EOL;
         $objTmp = (object) array('aFlat' => array());
         array_walk_recursive($articlesData, function(&$value, $key, $object) {
             $object->aFlat[] = $value;
@@ -74,15 +101,16 @@ class GrabCommand
 
         $rows = str_repeat('(?,?,?,?,?),', count($articlesData) - 1) . '(?,?,?,?,?)';
         $sql = "INSERT INTO grabbed_articles (url, image_url, title, content, excerpt) VALUES $rows";
-        $result = $this->db->prepare($sql);
-        if (!$result) {
-            print_r($this->db->errorInfo());
-        }
 
-        $result->execute($objTmp->aFlat);
+        try {
+            $result = $this->db->prepare($sql);
+            $result->execute($objTmp->aFlat);
+        } catch (\Exception $e) {
+            echo 'Error occurred while trying to save articles: ' . $e->getMessage() . PHP_EOL;
+        }
     }
 
-    protected function getNewArticles(string $page_content) : array
+    protected function parseIndexPageForUrls(string $page_content) : array
     {
         preg_match_all('~<a[^>]*data-yandex-name="from_news_feed"[^>]*>~msi', $page_content, $matches);
 
@@ -94,21 +122,38 @@ class GrabCommand
             $urls[] = $href;
         }
 
+        echo count($urls) . ' URLs was found on index page' . PHP_EOL;
+
         return $urls;
     }
 
-    protected function filterArticles(array $articlesToFilter)
+    protected function filterUrls(array $urlsToFilter)
     {
-        $urls = $articlesToFilter;
+        $urlsNumber = count($urlsToFilter);
 
-        $in  = str_repeat('?,', count($urls) - 1) . '?';
+        $in  = str_repeat('?,', count($urlsToFilter) - 1) . '?';
         $sql = "SELECT url FROM grabbed_articles WHERE url IN ($in)";
         $result = $this->db->prepare($sql);
-        $result->execute($urls);
+        $result->execute($urlsToFilter);
         $existingUrls = $result->fetchAll();
 
-        print_r($existingUrls);
-        return $articlesToFilter;
+        $filteredUrls = array_diff($urlsToFilter, $existingUrls);
+
+        foreach ($filteredUrls as $key => $urlToFilter) {
+            foreach (self::SUBDOMAINS_TO_SKIP as $subdomainToSkip) {
+                if (strstr($urlToFilter, $subdomainToSkip)) {
+                    unset($filteredUrls[$key]);
+                    continue 2;
+                }
+            }
+        }
+
+        $skippedUrlsNumber = $urlsNumber - count($filteredUrls);
+        if ($skippedUrlsNumber > 0) {
+            echo "$skippedUrlsNumber URLs were skipped" . PHP_EOL;
+        }
+
+        return $filteredUrls;
     }
 
     protected function grabArticle(string $url) : array
@@ -185,7 +230,7 @@ class GrabCommand
     protected function filterArticleContentSection(\simple_html_dom_node $contentItem)
     {
         // Removing garbage content
-        $nodesToDelete = $contentItem->find(implode(', ', self::CONTENT_SELECTORS_BLACK_LIST));
+        $nodesToDelete = $contentItem->find(implode(', ', self::NODE_SELECTORS_TO_REMOVE));
         foreach ($nodesToDelete as $node) {
             $node->outertext = '';
         }
@@ -198,12 +243,16 @@ class GrabCommand
 
     protected function generateExcerpt(string $fullContent) : string
     {
+        // Add spaces between tags before stripping them to avoid <h1>Foo</h1>Bar >>> FooBar
+        $fullContent = str_replace('<', ' <', $fullContent);
         $fullContent = strip_tags($fullContent);
+        $fullContent = str_replace('  ', ' ', $fullContent);
         $fullContent = html_entity_decode($fullContent);
 
         $excerpt = mb_substr($fullContent, 0, self::EXCERPT_LENGHT);
         $charAfterCrop = mb_substr($fullContent, self::EXCERPT_LENGHT, 1);
 
+        // Gentle cut text for excerpt, without cropping words
         if (
             mb_strlen($excerpt) === self::EXCERPT_LENGHT
             && ! in_array($charAfterCrop, ['.', ' ', '-'])
@@ -225,7 +274,7 @@ class GrabCommand
 
         $outputObject = (object) array('lines' => array());
         array_walk($articles, function(&$value, $key, $object) use ($longestUrl) {
-            $object->lines[] = (! $value) ? $key : sprintf("%-${longestUrl}s\t-\t%s", $key, $value);
+            $object->lines[] = (! $value) ? $key : (sprintf("%-${longestUrl}s\t-\t%s%s", $key, $value, chr(27) . "[K"));
         }, $outputObject);
         $output = implode(PHP_EOL, $outputObject->lines);
 
