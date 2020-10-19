@@ -13,7 +13,7 @@ class PostRepository extends Repository
      */
     public function findAll()
     {
-        $sql = "SELECT * FROM grabbed_posts";
+        $sql = "SELECT * FROM grabbed_posts ORDER BY id DESC";
         $result = $this->db->prepare($sql);
         $result->execute();
 

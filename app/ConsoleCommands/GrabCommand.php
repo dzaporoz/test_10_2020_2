@@ -22,7 +22,7 @@ class GrabCommand
     const EXCERPT_LENGHT = 200;
 
     // URLs with following subdomains will be skipped during grabbing
-    const SUBDOMAINS_TO_SKIP = ['//traffic.rbc.ru', '//moneysend.rbc.ru', '//plus.rbc.ru'];
+    const SUBDOMAINS_TO_SKIP = ['//traffic.rbc.ru', '//moneysend.rbc.ru', '//plus.rbc.ru', '//plus-one.rbc.ru'];
 
     // following elements will be removed from context blocks during parsing post pages
     const NODE_SELECTORS_TO_REMOVE = [
