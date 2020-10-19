@@ -8,3 +8,4 @@ RUN apt update && \
     php composer-setup.php && \
     php -r "unlink('composer-setup.php');" && \
     php composer.phar install
+CMD php -S 0.0.0.0:80 public/index.php
