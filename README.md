@@ -13,7 +13,7 @@ Clone project and build docker image
 ```
 git clone https://github.com/dzaporoz/test_10_2020_2.git
 cd test_10_2020_2
-docker build -t test_task .
+docker build -t test_image .
 ```
 To run the application without docker - install composer dependencies:
 
@@ -24,9 +24,9 @@ composer install
 ```
 
 ## Running
-1.1.1 To run php built-in server from a container execute:
+1.1.1 To run container with php built-in server execute:
 ```
-docker run -p 8080:80 test_task php -S 0.0.0.0:80 public/index.php
+docker run -d -p 8080:80 --name test_container test_image
 ```
 1.1.2. To run php built-in server without docker:
 ```
@@ -34,11 +34,9 @@ php -S localhost:8080 public/index.php
 ```
 1.2. Web version will be available at 'http://localhost:8080' URL
 
-1.3. To stop web server press Ctrl+C in console
-
 2.2 To run grabber execute following command:
 ```
-docker run test_task php bin/cli.php grab
+docker exec test_container php bin/cli.php grab
 ```
 or
 ```
@@ -47,7 +45,7 @@ php bin/cli.php grab
 
 2.3 To reset database run migration by command:
 ```
-docker run test_task php bin/cli.php migrate
+docker exec -i test_container php bin/cli.php migrate
 ```
 or
 ```
