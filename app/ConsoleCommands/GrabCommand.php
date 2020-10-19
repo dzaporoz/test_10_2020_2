@@ -6,14 +6,14 @@ namespace App\ConsoleCommands;
 
 use App\Core\DatabaseInterface;
 use App\Core\Kernel;
-use App\Repositories\ArticleRepository;
+use App\Repositories\PostRepository;
 use GuzzleHttp\Client;
 
 class GrabCommand
 {
     const NAME = 'grab';
 
-    const DESCRIPTION = 'Grabs 15 articles from rbc.ru and saves them to DB';
+    const DESCRIPTION = 'Grabs 15 news posts from rbc.ru and saves them to DB';
 
     // URL of index page
     const URL_TO_GRAB = 'https://www.rbc.ru';
@@ -41,13 +41,15 @@ class GrabCommand
     ];
 
 
-    protected $db;
+    protected PostRepository $pr;
 
     protected $httpClient;
 
     public function __construct(Client $httpClient)
     {
         $this->httpClient = $httpClient;
+
+        $this->pr = new PostRepository(Kernel::getService(DatabaseInterface::class));
     }
 
     public function handle()
@@ -59,12 +61,12 @@ class GrabCommand
         if ($numberOfUrls == 0) {
             die('There is nothing to grab' . PHP_EOL);
         }
-        echo "There are $numberOfUrls new articles to be grabbed:" . PHP_EOL;
+        echo "There are $numberOfUrls new posts to be grabbed:" . PHP_EOL;
         $this->outputStatusTable($urlsToGrab);
 
         require_once Kernel::ROOT_PATH . '/resources/libraries/simple_html_dom.php';
 
-        $articlesData = [];
+        $postsData = [];
         foreach ($urlsToGrab as $url => &$status) {
             if (! empty($status)) {
                 continue;
@@ -73,7 +75,7 @@ class GrabCommand
             $status = 'parsing...';
             $this->outputStatusTable($urlsToGrab);
             try {
-                $articlesData[] = $this->grabArticle($url);
+                $postsData[] = $this->grabPost($url);
                 $status = 'OK';
             } catch (\Exception $e) {
                 $status = 'ERROR: ' . $e->getMessage();
@@ -81,7 +83,7 @@ class GrabCommand
             $this->outputStatusTable($urlsToGrab);
         }
 
-        $this->saveArticles($articlesData);
+        $this->savePosts($postsData);
         echo 'Grabbing finished' . PHP_EOL;
     }
 
@@ -98,23 +100,22 @@ class GrabCommand
 
 
     /**
-     * Saves grabbed articles to DB
+     * Saves grabbed posts to DB
      *
-     * @param array $articlesData
+     * @param array $postsData
      */
-    protected function saveArticles($articlesData)
+    protected function savePosts($postsData)
     {
-        if (empty($articlesData)) {
+        if (empty($postsData)) {
             die('There is nothing to save' . PHP_EOL);
         }
 
-        echo 'Saving grabbed articles' . PHP_EOL;
+        echo 'Saving grabbed posts' . PHP_EOL;
 
         try {
-            $articleRepository = new ArticleRepository(Kernel::getService(DatabaseInterface::class));
-            $articleRepository->saveBulk($articlesData);
+            $this->pr->saveBulk($postsData);
         } catch (\Exception $e) {
-            echo 'Error occurred while trying to save articles: ' . $e->getMessage() . PHP_EOL;
+            echo 'Error occurred while trying to save posts: ' . $e->getMessage() . PHP_EOL;
         }
     }
 
@@ -152,12 +153,8 @@ class GrabCommand
     protected function filterUrls(array $urlsToFilter)
     {
         $urlsNumber = count($urlsToFilter);
-
-        $in  = str_repeat('?,', count($urlsToFilter) - 1) . '?';
-        $sql = "SELECT url FROM grabbed_articles WHERE url IN ($in)";
-        $result = $this->db->prepare($sql);
-        $result->execute($urlsToFilter);
-        $existingUrls = $result->fetchAll();
+        $existingPosts = $this->pr->findByUrl($urlsToFilter);
+        $existingUrls = array_column($existingPosts, 'url');
 
         $filteredUrls = array_diff($urlsToFilter, $existingUrls);
 
@@ -186,27 +183,34 @@ class GrabCommand
      * @return array of post data
      * @throws \GuzzleHttp\Exception\GuzzleException
      */
-    protected function grabArticle(string $url) : array
+    protected function grabPost(string $url) : array
     {
         $res = $this->httpClient->request('GET', $url);
 
-        $articleBody = $res->getBody();
+        $postBody = $res->getBody();
 
-        $articleData = [
+        $postData = [
             'url'       => $url,
-            'image_url' => $this->parseArticleImageUrl($articleBody),
-            'title'     => $this->parseArticleTitle($articleBody),
-            'content'   => $this->parseArticleContent($articleBody),
+            'image_url' => $this->parsePostImageUrl($postBody),
+            'title'     => $this->parsePostTitle($postBody),
+            'content'   => $this->parsePostContent($postBody),
         ];
 
-        $articleData['excerpt'] = $this->generateExcerpt($articleData['content']);
+        $postData['excerpt'] = $this->generateExcerpt($postData['content']);
 
-        return $articleData;
+        return $postData;
     }
 
-    protected function parseArticleImageUrl(string $articleBody) : ?string
+
+    /**
+     * Search for required img tag in post HTML page content and returns its src
+     *
+     * @param string $postBody
+     * @return string|null image source URL or null if parsing was unsuccessful
+     */
+    protected function parsePostImageUrl(string $postBody) : ?string
     {
-        $imageExists = preg_match('~<img[^>]*article__main-image__image[^>]*>~', $articleBody, $matches);
+        $imageExists = preg_match('~<img[^>]*article__main-image__image[^>]*>~', $postBody, $matches);
         if (! $imageExists || empty($matches)) {
             return null;
         }
@@ -217,47 +221,65 @@ class GrabCommand
         return $src;
     }
 
-    protected function parseArticleTitle(string $articleBody) : string
+    /**
+     * Parses post title from its HTML page content
+     *
+     * @param string $postBody
+     * @return string
+     * @throws \Exception In case the title wasn't found
+     */
+    protected function parsePostTitle(string $postBody) : string
     {
-        $articleTitleExists = preg_match('~<meta property="og:title" content="([^"]*)~', $articleBody, $matches);
+        $postTitleExists = preg_match('~<meta property="og:title" content="([^"]*)~', $postBody, $matches);
 
-        if (! $articleTitleExists || empty ($matches[1])) {
-            throw new \Exception("Unable to find article title");
+        if (! $postTitleExists || empty ($matches[1])) {
+            throw new \Exception("Unable to find post title");
         }
 
         return $matches[1];
     }
 
-    protected function parseArticleContent(string $articleBody) : string
+    /**
+     * Parses post content from its HTML page content
+     * @param string $postBody
+     * @return string
+     * @throws \Exception In case the content wasn't found
+     */
+    protected function parsePostContent(string $postBody) : string
     {
         // Remove HTML comments and spaces between tags
-        $articleBody = preg_replace(
+        $postBody = preg_replace(
             ['~<!--[^>]*>~', '~>[\s]*<~'],
             ['', '><'],
-            $articleBody
+            $postBody
         );
 
-        $articleContent = '';
+        $postContent = '';
         $html = new \simple_html_dom();
-        $html->load($articleBody);
+        $html->load($postBody);
 
         foreach ($html->find('div.article__text') as $contentItem) {
-            $this->filterArticleContentSection($contentItem);
-            $articleContent .= $contentItem->innertext;
+            $this->filterPostContentSection($contentItem);
+            $postContent .= $contentItem->innertext;
         }
 
         $html->clear();
         unset($html);
 
-        $articleContent = trim($articleContent);
-        if (mb_strlen($articleContent) < 10) {
-            throw new \Exception('Unable to find article content');
+        $postContent = trim($postContent);
+        if (mb_strlen($postContent) < 10) {
+            throw new \Exception('Unable to find post content');
         }
 
-        return $articleContent;
+        return $postContent;
     }
 
-    protected function filterArticleContentSection(\simple_html_dom_node $contentItem)
+    /**
+     * Removes garbage sub-elements from post content nodes
+     *
+     * @param \simple_html_dom_node $contentItem
+     */
+    protected function filterPostContentSection(\simple_html_dom_node $contentItem)
     {
         // Removing garbage content
         $nodesToDelete = $contentItem->find(implode(', ', self::NODE_SELECTORS_TO_REMOVE));
@@ -265,12 +287,20 @@ class GrabCommand
             $node->outertext = '';
         }
 
-        // Removing links and leaving their text
+        // Removing links but leaving their text
         foreach ($contentItem->find('a') as $link) {
             $link->outertext = $link->plaintext;
         }
     }
 
+    /**
+     * Generates short excerpt from full post content
+     *
+     * @param string $fullContent
+     * @return string
+     * @throws \Exception   In case post content was suspiciously short.
+     *                      Probably there was interactive or infografical post
+     */
     protected function generateExcerpt(string $fullContent) : string
     {
         // Add spaces between tags before stripping them to avoid <h1>Foo</h1>Bar >>> FooBar
@@ -299,17 +329,23 @@ class GrabCommand
         return $excerpt;
     }
 
-    protected function outputStatusTable(array $articles)
+    /**
+     * Outputs formatted table with posts URLs and their statuses.
+     * Further output will update the table by rewriting it
+     *
+     * @param array $posts
+     */
+    protected function outputStatusTable(array $posts)
     {
         static $firstOutput = true;
         static $longestUrl;
 
         if (empty($longestUrl)) {
-            $longestUrl = max(array_map('strlen', array_keys($articles)));
+            $longestUrl = max(array_map('strlen', array_keys($posts)));
         }
 
         $outputObject = (object) array('lines' => array());
-        array_walk($articles, function(&$value, $key, $object) use ($longestUrl) {
+        array_walk($posts, function(&$value, $key, $object) use ($longestUrl) {
             $object->lines[] = (! $value) ? $key : (sprintf("%-${longestUrl}s\t-\t%s%s", $key, $value, chr(27) . "[K"));
         }, $outputObject);
         $output = implode(PHP_EOL, $outputObject->lines);
@@ -317,7 +353,7 @@ class GrabCommand
         if ($firstOutput) {
             $firstOutput = false;
         } else {
-            $linesOffset = count($articles);
+            $linesOffset = count($posts);
             echo chr(27) . "[0G";
             echo chr(27) . "[${linesOffset}A";
         }

@@ -6,8 +6,13 @@ namespace App\Core;
 
 class Router
 {
+    /** @var array associated array of routes patterns and their data */
     protected array $routes = array();
+
+    /** @var array parameters of current route */
     protected array $params = array();
+
+    /** @var array dynamical URL parameters */
     protected array $urlParams = array();
 
     function __construct() {
@@ -17,11 +22,23 @@ class Router
         }
     }
 
+    /**
+     * Generate regex pattern for certain route and saves it in $routes array
+     *
+     * @param $route
+     * @param $params
+     */
     public function add($route, $params) {
         $route = '#^'.$route.'$#';
         $this->routes[$route] = $params;
     }
 
+    /**
+     * Checks current request URI for coincidence with given routes
+     * and fills variables with parameters
+     *
+     * @return bool
+     */
     public function match() {
         $url = trim($_SERVER['REQUEST_URI'], '/');
         if (strpos($url, '?') !== false)
@@ -36,6 +53,9 @@ class Router
         return false;
     }
 
+    /**
+     * Passes parameters to appropriate controller method or shows an error
+     */
     public function run() {
         if ($this->match()) {
             $path = 'App\Controllers\\'.ucfirst($this->params['controller']).'Controller';

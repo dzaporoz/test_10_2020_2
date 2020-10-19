@@ -54,7 +54,7 @@ class MigrationCommand {
     protected function migrateDatabase()
     {
         $db = Kernel::getService(DatabaseInterface::class);
-        $db->exec('CREATE TABLE IF NOT EXISTS grabbed_articles (
+        $db->exec('CREATE TABLE IF NOT EXISTS grabbed_posts (
             id INTEGER PRIMARY KEY NOT NULL,
             url VARCHAR not NULL,
             title VARCHAR NOT NULL,

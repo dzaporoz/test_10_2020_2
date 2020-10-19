@@ -3,12 +3,12 @@
 return [
 
     '' => [
-        'controller' => 'article',
+        'controller' => 'post',
         'action' => 'list',
     ],
 
-    'articles/(\d+)' => [
-        'controller' => 'article',
+    'posts/(\d+)' => [
+        'controller' => 'post',
         'action' => 'show',
     ],
 ];
