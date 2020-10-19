@@ -10,6 +10,7 @@
     ],
     "require": {
         "ext-mbstring": "*",
+        "ext-pdo": "*",
         "haydenpierce/class-finder": "^0.4.2",
         "guzzlehttp/guzzle": "^7.0",
         "php-di/php-di": "^6.3"

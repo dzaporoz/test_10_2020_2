@@ -6,13 +6,20 @@ use HaydenPierce\ClassFinder\ClassFinder;
 
 class ConsoleManager
 {
+    /** @var string[] namespaces of console command classes */
     protected array $command_classes = [];
 
-    public function __construct(int $argc, array $argv)
+    /*
+     * Building namespaces map for console command classes
+     */
+    public function __construct()
     {
         $this->command_classes = ClassFinder::getClassesInNamespace('App\ConsoleCommands');
     }
 
+    /*
+     * Generate usage output with ::NAME, ::DESCRIPTION of all console command classes
+     */
     public function showUsage()
     {
         echo "Usage:\n\tphp cli.php [command]" . PHP_EOL. PHP_EOL;
@@ -26,6 +33,12 @@ class ConsoleManager
         echo implode(PHP_EOL, $commands) . PHP_EOL;
     }
 
+    /**
+     * Runs command if it exists
+     * @param string $command_name
+     * @throws \DI\DependencyException
+     * @throws \DI\NotFoundException
+     */
     public function handleCommand(string $command_name)
     {
         $command = null;

@@ -6,6 +6,7 @@ namespace App\ConsoleCommands;
 
 use App\Core\DatabaseInterface;
 use App\Core\Kernel;
+use App\Repositories\ArticleRepository;
 use GuzzleHttp\Client;
 
 class GrabCommand
@@ -14,12 +15,16 @@ class GrabCommand
 
     const DESCRIPTION = 'Grabs 15 articles from rbc.ru and saves them to DB';
 
+    // URL of index page
     const URL_TO_GRAB = 'https://www.rbc.ru';
 
+    // excerpt length limit for generation
     const EXCERPT_LENGHT = 200;
 
-    const SUBDOMAINS_TO_SKIP = ['//traffic.rbc.ru', '//moneysend.rbc.ru'];
+    // URLs with following subdomains will be skipped during grabbing
+    const SUBDOMAINS_TO_SKIP = ['//traffic.rbc.ru', '//moneysend.rbc.ru', '//plus.rbc.ru'];
 
+    // following elements will be removed from context blocks during parsing post pages
     const NODE_SELECTORS_TO_REMOVE = [
         'div.article__text__overview',
         'div.article__main-image',
@@ -27,6 +32,7 @@ class GrabCommand
         'div.article__clear',
         'div.article__ticker',
         'div.article__inline-video',
+        'div.q-item__company',
         '.g-hidden',
         'div.js-news-video-stat',
         'div.banner',
@@ -34,14 +40,13 @@ class GrabCommand
         'script'
     ];
 
+
     protected $db;
 
     protected $httpClient;
 
-    public function __construct(DatabaseInterface $db, Client $httpClient)
+    public function __construct(Client $httpClient)
     {
-        $this->db = $db;
-
         $this->httpClient = $httpClient;
     }
 
@@ -77,8 +82,12 @@ class GrabCommand
         }
 
         $this->saveArticles($articlesData);
+        echo 'Grabbing finished' . PHP_EOL;
     }
 
+    /*
+     * Gets posts URLs from index page
+     */
     protected function getUrlsToGrab()
     {
         $res = $this->httpClient->request('GET', self::URL_TO_GRAB);
@@ -87,6 +96,12 @@ class GrabCommand
         return $this->filterUrls($indexPageUrls);
     }
 
+
+    /**
+     * Saves grabbed articles to DB
+     *
+     * @param array $articlesData
+     */
     protected function saveArticles($articlesData)
     {
         if (empty($articlesData)) {
@@ -94,22 +109,22 @@ class GrabCommand
         }
 
         echo 'Saving grabbed articles' . PHP_EOL;
-        $objTmp = (object) array('aFlat' => array());
-        array_walk_recursive($articlesData, function(&$value, $key, $object) {
-            $object->aFlat[] = $value;
-        }, $objTmp);
-
-        $rows = str_repeat('(?,?,?,?,?),', count($articlesData) - 1) . '(?,?,?,?,?)';
-        $sql = "INSERT INTO grabbed_articles (url, image_url, title, content, excerpt) VALUES $rows";
 
         try {
-            $result = $this->db->prepare($sql);
-            $result->execute($objTmp->aFlat);
+            $articleRepository = new ArticleRepository(Kernel::getService(DatabaseInterface::class));
+            $articleRepository->saveBulk($articlesData);
         } catch (\Exception $e) {
             echo 'Error occurred while trying to save articles: ' . $e->getMessage() . PHP_EOL;
         }
     }
 
+
+    /**
+     * Parse index page content for links to posts
+     *
+     * @param string $page_content HTML content
+     * @return array of parsed URLs
+     */
     protected function parseIndexPageForUrls(string $page_content) : array
     {
         preg_match_all('~<a[^>]*data-yandex-name="from_news_feed"[^>]*>~msi', $page_content, $matches);
@@ -127,6 +142,13 @@ class GrabCommand
         return $urls;
     }
 
+
+    /**
+     * Filters URLs parsed from index page for duplicates and black list of subdomains
+     *
+     * @param array $urlsToFilter
+     * @return array
+     */
     protected function filterUrls(array $urlsToFilter)
     {
         $urlsNumber = count($urlsToFilter);
@@ -156,6 +178,14 @@ class GrabCommand
         return $filteredUrls;
     }
 
+
+    /**
+     * Grabs post by its URL with parsing for required content
+     *
+     * @param string $url
+     * @return array of post data
+     * @throws \GuzzleHttp\Exception\GuzzleException
+     */
     protected function grabArticle(string $url) : array
     {
         $res = $this->httpClient->request('GET', $url);
@@ -260,6 +290,12 @@ class GrabCommand
             $lastSpacePos = mb_strrpos($excerpt, ' ');
             $excerpt = mb_substr($excerpt, 0, $lastSpacePos);
         }
+
+        $excerpt = trim($excerpt);
+        if (empty($excerpt)) {
+            throw new \Exception('Unable to generate excerpt. Insufficient of content');
+        }
+
         return $excerpt;
     }
 

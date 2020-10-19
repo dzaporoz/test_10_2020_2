@@ -10,12 +10,28 @@ class MigrationCommand {
 
     const DESCRIPTION = 'Create DB with required structure';
 
+    const DB_ROOT = Kernel::ROOT_PATH . '/database';
+
+    const DB_PATH = self::DB_ROOT . '/db.sqlite';
+
+    /*
+     * Creates Sqlite Database with required structure
+     */
     public function handle()
     {
-        $db_root = Kernel::ROOT_PATH . '/database';
-        $db_path = $db_root . '/db.sqlite';
+        $this->prepareFileStructure();
 
-        if (file_exists($db_path)) {
+        $this->migrateDatabase();
+
+        echo "Database migration finished successfully." . PHP_EOL;
+    }
+
+    /*
+     * Creates folder and file for DB. Rewrite existing file depends on user input
+     */
+    protected function prepareFileStructure()
+    {
+        if (file_exists(self::DB_PATH)) {
             echo "Database is already exists. You will lose all data. Continue? [y/N]\n";
             $handle = fopen ("php://stdin","r");
             $line = strtolower(trim(fgets($handle)));
@@ -24,13 +40,19 @@ class MigrationCommand {
                 exit;
             }
             fclose($handle);
-            unlink($db_path);
+            unlink(self::DB_PATH);
         }
-        if (! file_exists($db_root)) {
-            mkdir($db_root, 0755);
+        if (! file_exists(self::DB_ROOT)) {
+            mkdir(self::DB_ROOT, 0755);
         }
-        touch($db_path);
+        touch(self::DB_PATH);
+    }
 
+    /*
+     * Runs SQL command to create required structure in DB
+     */
+    protected function migrateDatabase()
+    {
         $db = Kernel::getService(DatabaseInterface::class);
         $db->exec('CREATE TABLE IF NOT EXISTS grabbed_articles (
             id INTEGER PRIMARY KEY NOT NULL,
@@ -40,7 +62,5 @@ class MigrationCommand {
             content TEXT not NULL,
             image_url VARCHAR
         )');
-
-        echo "Database migration finished successfully." . PHP_EOL;
     }
 }

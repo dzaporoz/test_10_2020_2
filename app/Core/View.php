@@ -8,9 +8,9 @@ class View
 {
     const VIEW_ROOT = Kernel::ROOT_PATH . '/resources/views/';
 
-    public $path;
+    public string $path;
 
-    public $route;
+    public array $route;
 
     public function __construct($route) {
         $this->route = $route;
@@ -37,12 +37,14 @@ class View
         exit;
     }
 
-    public static function errorCode($code) {
+    public static function errorCode(int $code, string $message = '') {
+        $title = $message ? "$code: $message" : $code;
+
         http_response_code($code);
-        $path = self::VIEW_ROOT . '/errors/'.$code.'.php';
-        if (file_exists($path)) {
-            require $path;
-        }
+        ob_start();
+        require self::VIEW_ROOT . '/error.php';
+        $content = ob_get_clean();
+        require self::VIEW_ROOT . '/base.php';
         exit;
     }
 }
