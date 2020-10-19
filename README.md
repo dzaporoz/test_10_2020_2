@@ -51,3 +51,11 @@ or
 ```
 php bin/cli.php migrate
 ```
+
+## Removing
+To remove docker application run:
+```
+docker stop test_container
+docker rm test_container
+docker image rm test_image
+```
